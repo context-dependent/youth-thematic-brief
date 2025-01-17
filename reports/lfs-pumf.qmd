@@ -1,0 +1,495 @@
+# Youth in the Canadian Labour Market
+```{r}
+#| label: lfs-setup
+
+library(tidyverse)
+source(here::here("R/import-lfs.R"))
+
+d <- import_lfs_data()
+```
+
+## Definitions
+
+### Youth
+
+In this report, we use the term "youth" to refer to individuals of working age (15 to 29). 
+This is consistent with definitions used by Statistics Canada and the International Labour Organization.
+
+### Newcomer
+
+This report defines newcomers as immigrants to Canada who landed 10 or fewer
+years prior to the reference year. 
+Conventional definitions of newcomers use a 5-year window, but the LFS PUMF does not
+distinguish between immigrants who landed 5 or fewer years ago and those who landed 6 to 10 years ago.
+
+### School Months
+
+Current enrollment in either high school or post-secondary education is one dimension
+of the segmentation model developed below. 
+While the LFS PUMF variable `SCHOOLN` indicates current _attendance_, it does indicate current 
+_enrollment_. 
+This means that, for example, a student who is on summer break would be classified as not currently
+attending school, even though they are still enrolled.
+To address this issue, we limit impacted components of the analysis to typically active university terms (September to May). 
+
+## Research Questions
+
+1. How have youth fared in the Canadian labour market over the past 10 years?
+  - Participation, employment, enrollment, and NEET rates 2015-2024
+  - Average hourly wages 2015-2024
+  - Job precarity indicators 2015-2024
+2. How has the youth population changed?
+  - Post-secondary attainment among youth 2015-2024
+  - Representation of newcomers among youth 2015-2024
+  - Segmentation model
+3. How has youth search behaviour changed?
+  - Job search rates among unemployed youth 2015-2024
+  - Job search methods among unemployed youth by segment 2015-2024
+
+## How have youth fared in the Canadian labour market?
+
+Unsurprisingly, youth in Canada have lower participation, employment, and earnings than non-youth. 
+Of note is the disproportionate impact of the COVID-19 pandemic on youth employment and participation rates in 2020, and their slower recovery compared to non-youth.
+Whether this portends a long-term shift in the labour market remains to be seen, 
+but it is clear that youth entering or returning to the labour market in the near future
+will encounter a different landscape than their pre-pandemic counterparts. 
+
+### Labour market rate indicators
+
+@tbl-youth-rates presents annualized average rates of participation, employment, unemployment, enrollment, and NEET status among youth in Canada from 2015 to 2024. 
+
+It suggests the following: 
+
+- Youth participation and employment rates are consistently lower than those of the non-youth population.
+- NEET rates among youth are consistently lower due to much higher rates of enrollment in education. 
+- Youth participation, employment, and NEET rates jumped in 2020, but have largely recovered to pre-pandemic levels. 
+
+```{r}
+#| label: tbl-youth-rates
+#| tbl-cap: "Labour market indicators for youth"
+#| width: 100%
+
+gt_spanners <- function(g, ...) {
+  g_ <- g
+
+  spanners <- rlang::list2(...)
+
+  purrr::iwalk(
+    spanners, 
+    function(pattern, label) {
+      g_ <<- g_ |> 
+        gt::tab_spanner(
+          label = label, 
+          columns = matches(pattern)
+        )
+    }
+  )
+  g_
+}
+
+lfs_source_note <- function(g, u = "Working-age population (15-64)") {
+  g |> 
+    gt::tab_source_note(
+      source_note = "Source: Labour Force Survey Public Use Microdata File (LFS PUMF), Statistics Canada"
+    ) |> 
+    gt::tab_source_note(
+      source_note = glue::glue("Universe: {u}")
+    )
+}
+
+
+t01 <- d |> 
+  filter(school_month) |> 
+  group_by(SURVYEAR, youth_fct) |> 
+  summarize(
+    participation = weighted.mean(participating_lgl, FINALWT),
+    employment = weighted.mean(employed_lgl, FINALWT),
+    unemployment = weighted.mean(unemployed_lgl, FINALWT, na.rm = TRUE),
+    enrollment = weighted.mean(enrolled_lgl, FINALWT),
+    neet = weighted.mean(neet_lgl, FINALWT)
+  ) |> 
+  ungroup()
+
+t01 |> 
+  pivot_wider(
+    names_from = youth_fct, 
+    values_from = c(participation, employment, unemployment, enrollment, neet)
+  ) |> 
+  gt::gt() |> 
+  gt::fmt_percent(
+    columns = c(-SURVYEAR),
+    decimals = 0
+  ) |> 
+  gt_spanners(
+    "Participation" = "participation", 
+    "Employment" = "^employment", 
+    "Unemployment" = "unemployment",
+    "Enrollment" = "enrollment",
+    "NEET" = "neet"
+  ) |> 
+  gtExtras::gt_theme_538() |> 
+  gt::cols_label_with(
+    columns = c(-SURVYEAR), 
+    fn = function(x) {
+      x |> 
+        stringr::str_replace("^.*(A|Y).*(\\d{2}-\\d{2})$", "\\1(\\2)")
+    }
+  ) |> 
+  lfs_source_note()
+```
+
+
+@fig-youth-rate-gap isolates the gap between youth and non-youth in participation, employment, and NEET rates. It highlights the disproportionate impact of the COVID-19 pandemic on youth employment and participation rates in 2020, and the slower recovery of youth employment and participation rates compared to those of non-youth. 
+
+```{r}
+#| label: fig-youth-rate-gap
+#| caption: "Gaps between youth and non-youth in labour market indicators"
+
+m01 <- d |> 
+  filter(school_month) |>
+  pivot_longer(
+    c(participating_lgl, employed_lgl, neet_lgl),
+    names_to = "var", 
+    values_to = "y"
+  ) |> 
+  group_by(SURVYEAR, var) |> 
+  group_nest(.key = "dat") |> 
+  mutate(
+    mod = map(
+      dat,
+      ~ lm(
+        y ~ youth_lgl + factor(SURVMNTH), 
+        data = .x,
+        weights = FINALWT
+      )
+    ), 
+    tab = map(
+      mod, 
+      ~ broom::tidy(.x, conf.int = TRUE) |> 
+        dplyr::bind_rows(
+          multcomp::glht(.x, "(Intercept) + youth_lgl = 0") |>
+            broom::tidy() |>
+            dplyr::select(
+                -null.value
+            ) |>
+            dplyr::rename(
+                term = contrast,
+                p.value = adj.p.value
+            ) |>
+            dplyr::mutate(
+                conf.low = estimate - 1.96 * std.error,
+                conf.high = estimate + 1.96 * std.error
+            )
+        )
+    )
+  )
+
+m01 |> 
+  select(SURVYEAR, var, tab) |> 
+  unnest(tab) |> 
+  filter(term == "youth_lgl") |>
+  ggplot(aes(SURVYEAR)) + 
+  facet_wrap(~var) + 
+  ggdist::stat_halfeye(
+    aes(ydist = distributional::dist_normal(estimate, std.error))
+  ) + 
+  scale_x_continuous(
+    breaks = 2015:2024, 
+    labels = function(x) glue::glue("'{x - 2000}")
+  ) + 
+  scale_y_continuous(
+    breaks = c(-.05, -.1, -.15, -.2),
+    limits = c(-.2, -.05),
+    labels = scales::percent_format(suffix = " ppt", accuracy = 1)
+  ) + 
+  labs(
+    title = "Rate gaps between youth and non-youth",
+    y = "Gap"
+  )
+
+```
+
+
+### Job quality indicators
+
+@tbl-youth-job-quality shows a selection of job quality indicators among employed youth in Canada from 2015 to 2024.
+
+In it, we observe the following:
+- Hourly earnings among employed youth are consistently lower than those of their non-youth counterparts.
+- Employed youth are much more likely to occupy part-time or temporary positions than non-youth employees.
+- Involuntary part-time work is more common among employed youth than among non-youth employees. 
+
+```{r}
+#| label: tbl-youth-job-quality
+#| tbl-cap: "Job quality indicators for employed youth"
+
+t02 <- d |> 
+  filter(
+    employed_lgl %in% 1, 
+    as.integer(COWMAIN) < 3
+  ) |> 
+  group_by(SURVYEAR, youth_fct) |> 
+  summarize(
+    hrlyearn = weighted.mean(HRLYEARN, FINALWT),
+    part_time = weighted.mean(FTPTMAIN == "Part-time", FINALWT),
+    involuntary_pt = weighted.mean(job_involuntary_pt_lgl, FINALWT),
+    temporary = weighted.mean(job_temporary_lgl, FINALWT), 
+    .groups = "drop"
+  )
+
+
+t02 |> 
+  pivot_wider(
+    names_from = youth_fct, 
+    values_from = c(-SURVYEAR, -youth_fct)
+  ) |> 
+  gt::gt() |> 
+  gt::fmt_percent(
+    columns = c(-SURVYEAR, -matches("hrlyearn")),
+    decimals = 0
+  ) |> 
+  gt::fmt_currency(
+    columns = matches("hrlyearn"),
+    currency = "CAD",
+    decimals = 2
+  ) |>
+  gt_spanners(
+    "Hourly earnings" = "hrlyearn", 
+    "Part-time" = "part_time",
+    "Involuntary part-time" = "involuntary_pt",
+    "Temporary" = "temporary"
+  ) |> 
+  gtExtras::gt_theme_538() |> 
+  gt::cols_label_with(
+    columns = c(-SURVYEAR), 
+    fn = function(x) {
+      x |> 
+        stringr::str_replace("^.*(A|Y).*(\\d{2}-\\d{2})$", "\\1(\\2)")
+    }
+  ) |> 
+  lfs_source_note(u = "Employed, employees")
+
+```
+
+@fig-youth-earnings-gap shows the gap in hourly earnings between youth and non-youth employees in Canada from 2015 to 2024. It suggests that earnings among employed youth have followed a similar trajectory to employment rates, in that they dropped disproportionately in 2020 and have lagged behind the recovery of non-youth earnings.
+
+```{r}
+#| label: fig-youth-earnings-gap
+#| caption: "Earnings gap among youth"
+
+m02 <- d |> 
+  group_by(SURVYEAR) |> 
+  group_nest(.key = "dat") |> 
+  mutate(
+    mod = map(
+      dat,
+      ~ lm(
+        z_hrlyearn ~ youth_lgl + factor(SURVMNTH), 
+        data = .x,
+        weights = FINALWT
+      )
+    ), 
+    tab = map(
+      mod, 
+      ~broom::tidy(.x, conf.int = TRUE) |>
+        bind_rows(
+          multcomp::glht(.x, "(Intercept) + youth_lgl = 0") |>
+            broom::tidy() |>
+            select(
+                -null.value
+            ) |>
+            rename(
+                term = contrast,
+                p.value = adj.p.value
+            ) |>
+            mutate(
+                conf.low = estimate - 1.96 * std.error,
+                conf.high = estimate + 1.96 * std.error
+            )
+      )
+    )
+  )
+
+
+m02 |> 
+  select(SURVYEAR, tab) |> 
+  unnest(tab) |> 
+  filter(term == "youth_lgl")|>
+  mutate(
+    estimate = estimate * sd(d$HRLYEARN, na.rm = TRUE), 
+    std.error = std.error * sd(d$HRLYEARN, na.rm = TRUE)
+  ) |> 
+  ggplot(aes(SURVYEAR)) + 
+  ggdist::stat_halfeye(
+    aes(ydist = distributional::dist_normal(estimate, std.error))
+  ) + 
+  scale_y_continuous(
+    labels = scales::dollar_format()
+  ) + 
+  scale_x_continuous(
+    breaks = 2015:2024
+  ) + 
+  labs(
+    y = "Wage gap\n(naive likelihood)",
+    title = "Youth wage disadvantage"
+  ) + 
+  bptheme::theme_blueprint(plot_background_color = NA)
+```
+
+## How has the youth population changed?
+
+The youth population in Canada has grown more educated and more diverse over the past decade. 
+The rate of PSE attainment increased by 9.6%, while the rate of newcomer representation among youth increased by 35.2% over the same period.
+
+### National representation of PSE and newcomer status
+
+@tbl-youth-pop shows the proportion of youth in Canada who have attained post-secondary education and the proportion of youth who are newcomers from 2015 to 2024.
+Both indicators have increased over the past decade. 
+The rate of post-secondary attainment among youth increased by 3.8 ppt between 2015 and 2024,
+while the rate of newcomer representation among youth has increased by 3.0 ppt over the same period.  
+
+```{r}
+#| label: tbl-youth-pop
+#| tbl-cap: "Youth PSE attainment and newcomer representation"
+
+t03 <- d |> 
+  filter(youth_lgl == 1, school_month) |> 
+  group_by(SURVYEAR) |> 
+  summarize(
+    pse = weighted.mean(has_pse_lgl, FINALWT),
+    newcomer = weighted.mean(newcomer_lgl, FINALWT)
+  )
+
+t03 |> 
+  gt::gt() |> 
+  gt::fmt_percent(
+    columns = c(-SURVYEAR), 
+    decimals = 1 
+  ) |> 
+  gtExtras::gt_theme_538() |> 
+  gt::cols_label_with( 
+    fn = function(x) {
+      case_when(
+        x == "pse" ~ gt::md("PSE attainment"),
+        x == "newcomer" ~ gt::md("Newcomer representation"),
+        x == "SURVYEAR" ~ gt::md("Year")
+      )
+    }
+  ) |> 
+  lfs_source_note(u = "Youth 15-29")
+```
+
+### Key segments of the youth population
+
+@fig-youth-segments-rep shows the distribution of youth in Canada across key segments from 2015 to 2024.
+The segments are defined by the intersection of educational enrollment, educational attainment, and newcomer status. 
+
+```{r}
+#| label: fig-youth-segments-rep
+#| caption: "Segment representation among youth"
+#| width: 100%
+#| height: 4
+
+t04 <- d |> 
+  filter(
+    youth_lgl == 1,
+    school_month
+  ) |> 
+  group_by(SURVYEAR, SURVMNTH) |> 
+  count(segment, wt = FINALWT) |>
+  mutate(p = n / sum(n)) |>
+  group_by(segment) |>
+  mutate(idx_15 = round(p / first(p) * 100) - 100) |>
+  ungroup()
+
+t04 |> 
+  ggplot(aes(SURVMNTH, p)) +
+  facet_grid(.~SURVYEAR) +  
+  geom_path(aes(group = segment, color = segment)) + 
+  scale_x_discrete(
+    labels = function(x) stringr::str_sub(x, end = 1L), expand = expansion(c(0.01, 0.01))
+  ) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  bptheme::theme_blueprint(plot_background_color = NA)
+```
+
+@fig-youth-segments-idx shows the percentage change in the representation of each segment 
+in the youth population from January 2015. 
+It highlights the dramatic proportional increase in the representation of non-student newcomers,
+especially those with PSE attainment (which has more than doubled) among Canadian youth. 
+
+```{r}
+#| label: fig-youth-segments-idx
+#| caption: "Shifts in segment representation among youth"
+#| width: 100%
+#| height: 4
+t04 |> 
+  ggplot(aes(SURVMNTH, idx_15)) +
+  facet_grid(.~SURVYEAR) +  
+  geom_path(aes(group = segment, color = segment)) + 
+  scale_x_discrete(
+    labels = function(x) stringr::str_sub(x, end = 1L), expand = expansion(c(0.01, 0.01))
+  ) +
+  scale_y_continuous() +
+  bptheme::theme_blueprint(plot_background_color = NA)
+
+```
+
+@fig-youth-segments-prov disaggregates the total shift in segment representation from January 2015 to December 2024 by province. 
+
+In absolute terms, representation of newcomers with PSE among working-age youth
+increased in all provinces.
+PEI experienced the highest absolute increase (+3.4 ppt), 
+while Saskatchewan experienced the lowest (+.5 ppt).
+
+```{r}
+#| label: fig-youth-segments-prov
+#| caption: "Shifts in segment representation among youth by province"
+#| width: 100%
+#| height: 6
+
+t05 <- d |> 
+  filter(youth_lgl == 1, school_month) |> 
+  group_by(SURVYEAR, PROV) |> 
+  count(segment, wt = FINALWT) |> 
+  mutate(p = n / sum(n)) |>
+  group_by(PROV, segment) |> 
+  summarize(
+    delta_abs = last(p) - first(p),
+    delta_idx = last(p) / first(p) - 1,
+    .groups = "drop"
+  )
+
+t05 |> 
+  ggplot(aes(delta_abs, PROV)) + 
+  geom_col(aes(fill = segment), position = "dodge") +
+  facet_wrap(~segment, nrow = 2) + 
+  bptheme::theme_blueprint(plot_background_color = NA) + 
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1), breaks = seq(-.03, .03, .01))
+```
+
+Indexed to 2015 (@fig-youth-segments-prov-idx), the growth of both newcomer segments dwarfs 
+changes in the others. 
+For those segments, changes were most dramatic in the Atlantic provinces.
+Newfoundland and Labrador experienced the greatest relative increase, 
+with the proportion of newcomers with PSE among working-age youth increasing
+by an order of magnitude (12.6 X)
+
+```{r}
+#| label: fig-youth-segments-prov-idx
+#| caption: "Shifts in segment representation among youth by province (indexed to 2015)"
+#| width: 100%
+#| height: 6
+
+t05 |> 
+  ggplot(aes(delta_idx, PROV)) + 
+  geom_col(aes(fill = segment), position = "dodge") +
+  facet_wrap(~segment, nrow = 2) + 
+  bptheme::theme_blueprint(plot_background_color = NA) +
+  scale_x_continuous(
+    labels = function(x) {
+      scales::number(x + 1, suffix = "x")
+    }
+  )
+```
+

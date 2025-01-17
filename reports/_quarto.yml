@@ -1,0 +1,30 @@
+project:
+  type: book
+  output-dir: ../docs
+  execute-dir: project
+
+book:
+  title: "Youth Thematic Brief Population Analysis"
+  author: "Thomas McManus"
+  date: "2024-07-26"
+  chapters:
+    - index.qmd
+    - lfs-pumf.qmd
+  favicon: favicon.png
+  sidebar:
+    logo: blueprint-logo.png
+
+bibliography: refs.bib
+
+format:
+  html:
+    theme: 
+      - cosmo
+      - custom.scss
+    code-fold: true
+    code-summary: "Show code"
+
+knitr:
+  opts_chunk:
+    collapse: true
+
