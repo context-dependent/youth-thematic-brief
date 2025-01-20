@@ -495,11 +495,15 @@ t05 |>
 
 ## How has youth job-search behaviour changed?
 
+- Unemployed youth and adults behave similarly with respect to job search activities
+- Among unemployed youth, newcomers with PSE---the fastest growing segment of the youth population---appear to have become the most active job seekers. 
+Of the segments described above, they are the most likely to be searching for work, and the most likely to use public agencies, their personal networks, and job ads in their job search. 
+
+### Compared with non-youth
+
 - Unemployed adults 30+ and youth under 30 share similar job search behaviours
 - Over time, those behaviours have trended in similar directions
 - The only notable difference is that youth have been more likely to reach out to employers directly
-
-### Compared with non-youth
 
 ```{r}
 #| label: tbl-youth-search
@@ -548,6 +552,12 @@ t06 |>
 
 ### By segment
 
+- Among unemployed youth, newcomers _and_ those who are enrolled in or have completed PSE are more likely to rely on friends and family, 
+especially in 2024
+- Newcomers with PSE were the most likely segment to use public agencies, followed by newcomers without PSE
+- Non-student newcomers with PSE---the fastest growing segment of the youth population---were, in 2024, the most likely segment to use public agencies, plumb their personal networks, and look at job ads in their job search
+
+
 ```{r}
 #| label: tbl-segment-search
 #| tbl-cap: "Job search behaviour by youth segment"
@@ -559,7 +569,7 @@ t07 <- d |>
   summarize(
     job_searching = weighted.mean(job_searching_lgl, FINALWT), 
     across(
-      matches("LK(PUBAG|RELS)"), 
+      matches("LK(PUBAG|RELS|ATADS)"), 
       ~ weighted.mean(!is.na(.x), FINALWT, na.rm = TRUE)
     ), 
     .groups = "drop"
@@ -577,6 +587,7 @@ t07 |>
     "Searched" = "job_searching", 
     "Public agency" = "LKPUBAG", 
     "Friends and Family" = "LKRELS",
+    "Looked at ads" = "LKATADS"
   ) |> 
   gtExtras::gt_theme_538() |> 
   gt::cols_label_with(
@@ -600,6 +611,11 @@ t07 |>
   gt::data_color(
     columns = c(matches("LKRELS")), 
     palette = "Greens", 
+    domain = c(0, 1)
+  ) |> 
+  gt::data_color(
+    columns = c(matches("LKATADS")), 
+    palette = "Purples", 
     domain = c(0, 1)
   )
 
