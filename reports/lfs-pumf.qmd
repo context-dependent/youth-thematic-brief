@@ -388,7 +388,7 @@ The segments are defined by the intersection of educational enrollment, educatio
 #| label: fig-youth-segments-rep
 #| caption: "Segment representation among youth"
 #| width: 100%
-#| height: 4
+#| height: 3
 
 t04 <- d |> 
   filter(
@@ -422,7 +422,7 @@ especially those with PSE attainment (which has more than doubled) among Canadia
 #| label: fig-youth-segments-idx
 #| caption: "Shifts in segment representation among youth"
 #| width: 100%
-#| height: 4
+#| height: 3
 t04 |> 
   ggplot(aes(SURVMNTH, idx_15)) +
   facet_grid(.~SURVYEAR) +  
@@ -493,3 +493,115 @@ t05 |>
   )
 ```
 
+## How has youth job-search behaviour changed?
+
+- Unemployed adults 30+ and youth under 30 share similar job search behaviours
+- Over time, those behaviours have trended in similar directions
+- The only notable difference is that youth have been more likely to reach out to employers directly
+
+### Compared with non-youth
+
+```{r}
+#| label: tbl-youth-search
+#| tbl-cap: "Job search behaviour among unemployed youth"
+#| width: 100%
+
+t06 <- d |> 
+  filter(unemployed_lgl == 1) |> 
+  group_by(SURVYEAR, youth_fct) |> 
+  summarize(
+    job_searching = weighted.mean(job_searching_lgl, FINALWT), 
+    across(
+      matches("LK(PUBAG|EMPLOY|RELS|ATADS)"), 
+      ~ weighted.mean(!is.na(.x), FINALWT, na.rm = TRUE)
+    ), 
+    .groups = "drop"
+  )
+
+t06 |> 
+  pivot_wider(
+    names_from = youth_fct, 
+    values_from = c(-SURVYEAR, -youth_fct)
+  ) |> 
+  gt::gt() |> 
+  gt::fmt_percent(
+    columns = c(-SURVYEAR),
+    decimals = 0
+  ) |>
+  gt_spanners(
+    "Searched" = "job_searching", 
+    "Public agency" = "LKPUBAG", 
+    "Employer outreach" = "LKEMPLOY", 
+    "Friends or family" = "LKRELS", 
+    "Looked at ads" = "LKATADS"
+  ) |> 
+  gtExtras::gt_theme_538() |> 
+  gt::cols_label_with(
+    columns = c(-SURVYEAR), 
+    fn = function(x) {
+      x |> 
+        stringr::str_replace("^.*(A|Y).*(\\d{2}-\\d{2})$", "\\1(\\2)")
+    }
+  ) |> 
+  lfs_source_note(u = "Unemployed youth 15-30")
+```
+
+### By segment
+
+```{r}
+#| label: tbl-segment-search
+#| tbl-cap: "Job search behaviour by youth segment"
+#| width: 100%
+
+t07 <- d |> 
+  filter(unemployed_lgl == 1, school_month, youth_lgl == 1) |> 
+  group_by(SURVYEAR, segment) |> 
+  summarize(
+    job_searching = weighted.mean(job_searching_lgl, FINALWT), 
+    across(
+      matches("LK(PUBAG|RELS)"), 
+      ~ weighted.mean(!is.na(.x), FINALWT, na.rm = TRUE)
+    ), 
+    .groups = "drop"
+  )
+
+t07 |>
+  filter(SURVYEAR %in% c(2015, 2020, 2024)) |> 
+  pivot_wider(names_from = SURVYEAR, values_from = c(-SURVYEAR, -segment)) |>
+  gt::gt() |> 
+  gt::fmt_percent(
+    columns = c(-segment),
+    decimals = 0
+  ) |>
+  gt_spanners(
+    "Searched" = "job_searching", 
+    "Public agency" = "LKPUBAG", 
+    "Friends and Family" = "LKRELS",
+  ) |> 
+  gtExtras::gt_theme_538() |> 
+  gt::cols_label_with(
+    columns = c(-segment), 
+    fn = function(x) {
+      x |> 
+        stringr::str_replace("^.*(\\d{2})(\\d{2})$", "'\\2")
+    }
+  ) |> 
+  lfs_source_note(u = "Unemployed youth 15-30") |> 
+  gt::data_color(
+    columns = c(matches("job_searching")), 
+    palette = "Reds", 
+    domain = c(0, 1)
+  ) |> 
+  gt::data_color(
+    columns = c(matches("LKPUBAG")), 
+    palette = "Blues", 
+    domain = c(0, 1)
+  ) |> 
+  gt::data_color(
+    columns = c(matches("LKRELS")), 
+    palette = "Greens", 
+    domain = c(0, 1)
+  )
+
+
+```
